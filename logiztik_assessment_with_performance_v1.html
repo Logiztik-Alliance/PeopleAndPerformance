@@ -798,19 +798,31 @@ function renderCVRadar(people){
 
   function avg(arr, key){ const n=arr.length||1; return Math.round(arr.reduce((s,p)=>s+parseFloat(p[key]||50),0)/n); }
 
+  // Distinct dash pattern + point style per station so overlapping lines stay
+  // distinguishable even when the underlying averages are very close.
+  const STATION_STYLE = {
+    'United States': { dash: [],      pointStyle: 'circle' },
+    'Ecuador':       { dash: [8,4],   pointStyle: 'triangle' },
+    'Colombia':      { dash: [2,3],   pointStyle: 'rectRot' },
+    'Netherlands':   { dash: [6,3,2,3], pointStyle: 'rect' },
+  };
+
   let datasets;
   if(cvFilter==='all' && stationsInData.length>1){
     datasets = stationsInData.map(s=>{
       const sp=people.filter(p=>p.station===s);
       const c=CV_STATION_COLORS[s]||{main:'#888780'};
+      const style=STATION_STYLE[s]||{dash:[],pointStyle:'circle'};
       return {
         label: s+' ('+sp.length+')',
         data: DIM_KEYS.map(k=>avg(sp,k)),
-        backgroundColor: c.main+'22',
+        backgroundColor: c.main+'18',
         borderColor: c.main,
         borderWidth:2.5,
+        borderDash: style.dash,
+        pointStyle: style.pointStyle,
         pointBackgroundColor: c.main,
-        pointRadius:5, pointBorderColor:'#fff', pointBorderWidth:2,
+        pointRadius:6, pointBorderColor:'#fff', pointBorderWidth:2,
       };
     });
     document.getElementById('cv-radar-title').textContent='Behavioral dimensions — by station';
@@ -849,7 +861,7 @@ function renderCVRadar(people){
   const leg=document.getElementById('cv-radar-legend');
   leg.innerHTML=datasets.map(d=>`
     <span style="display:flex;align-items:center;gap:6px">
-      <span style="width:12px;height:12px;border-radius:50%;background:${d.borderColor};flex-shrink:0"></span>
+      <svg width="22" height="10" style="flex-shrink:0"><line x1="0" y1="5" x2="22" y2="5" stroke="${d.borderColor}" stroke-width="2.5" stroke-dasharray="${(d.borderDash||[]).join(',')}"/></svg>
       <span style="color:var(--text2)">${d.label}</span>
     </span>`).join('');
 }
@@ -946,7 +958,7 @@ function renderCVCards(people){
 // ═══════════════════════════════════════════════════════════════════════════════
 const GS_URL      = 'https://script.google.com/macros/s/AKfycbzNcQwabEIvq9DGX0qFzbqg2m7Jfv13_j129YksgMxrdK8bEtM54aijwADmJqtQbmu8/exec';
 // ↓ Replace this with your new Performance Apps Script deployment URL
-const PERF_GS_URL = 'https://script.google.com/macros/s/AKfycbx-8APCwjAD3EXTX0aBJ4xfJUa5-tLhz99pHaZOeNjpskg3xBsIchF2umw95r0MqtU1/exec';
+const PERF_GS_URL = 'https://script.google.com/macros/s/AKfycbwQ-UZ3YAXRREfjM9UbAg6SAwip43FgwF-Wzbt3X2a-01OBXkpvxSGhErmjWOLm60nK4g/exec';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // LANGUAGE
@@ -1023,6 +1035,7 @@ function norm(raw,n){const max=n*3||1,r={};['A','B','C','D','E'].forEach(k=>r[k]
 function classifyWithSecondary(n1,n2){
   const avg={};['A','B','C','D','E'].forEach(k=>avg[k]=(n1[k]+n2[k])/2);
   const {A,B,C,D,E}=avg;
+  const vals={A,B,C,D,E};
   const gates={Strategist:A>=57&&D>=60&&E>=55,Promoter:B>=60&&A<65,Maverick:A>=58&&D<=50,Collaborator:B>=57&&C>=60&&A<=57,Specialist:D>=63&&B<=60,Operator:C>=62&&A<=58&&D>=52,Explorer:true};
   const scores={};
   if(gates.Strategist)   scores.Strategist   =(A>=62?3:1)+(D>=65?2:1)+(E>=60?2:1)+(B<55?1:0);
@@ -1032,8 +1045,23 @@ function classifyWithSecondary(n1,n2){
   if(gates.Specialist)   scores.Specialist   =(D>=68?3:2)+(B<54?2:1)+(E>=60?1:0);
   if(gates.Operator)     scores.Operator     =(C>=65?3:2)+(D>=60?2:1)+(B>=55?1:0);
   scores.Explorer=2;
+  // Primary defining axis + gate threshold per profile — used ONLY to break ties
+  const PRIMARY_AXIS={Strategist:['A',57],Promoter:['B',60],Maverick:['A',58],Collaborator:['C',60],Specialist:['D',63],Operator:['C',62],Explorer:[null,0]};
+  const maxScore=Math.max(...Object.values(scores));
+  const tied=Object.keys(scores).filter(k=>scores[k]===maxScore);
+  let primary;
+  if(tied.length===1){
+    primary=tied[0];
+  } else {
+    // Tiebreak: largest margin above the profile's own primary-axis gate threshold
+    primary=tied.slice().sort((a,b)=>{
+      const [axA,thA]=PRIMARY_AXIS[a],[axB,thB]=PRIMARY_AXIS[b];
+      const marginA=axA?vals[axA]-thA:-999, marginB=axB?vals[axB]-thB:-999;
+      return marginB-marginA;
+    })[0];
+  }
   const sorted=Object.keys(scores).sort((a,b)=>scores[b]-scores[a]);
-  const primary=sorted[0],secondary=sorted[1]!==primary?sorted[1]:sorted[2];
+  const secondary=sorted.find(k=>k!==primary);
   const showSecondary=secondary&&Math.abs(scores[primary]-scores[secondary])<=2;
   return{primary,secondary:showSecondary?secondary:null};
 }
@@ -2128,6 +2156,7 @@ function applyLang(){
 (function(){
   const tests=[['Strategist',67,50,57,69,65,'Strategist'],['Collaborator',53,64,68,63,56,'Collaborator'],['Promoter',58,66,62,66,57,'Promoter'],['Operator',58,62,64,65,57,'Operator'],['Specialist',56,56,63,72,62,'Specialist'],['Maverick',68,45,45,43,60,'Maverick'],['Explorer',52,53,55,54,52,'Explorer']];
   function tc(A,B,C,D,E){
+    const vals={A,B,C,D,E};
     const g={Strategist:A>=57&&D>=60&&E>=55,Promoter:B>=60&&A<65,Maverick:A>=58&&D<=50,Collaborator:B>=57&&C>=60&&A<=57,Specialist:D>=63&&B<=60,Operator:C>=62&&A<=58&&D>=52,Explorer:true};
     const s={};
     if(g.Strategist)   s.Strategist  =(A>=62?3:1)+(D>=65?2:1)+(E>=60?2:1)+(B<55?1:0);
@@ -2137,7 +2166,15 @@ function applyLang(){
     if(g.Specialist)   s.Specialist  =(D>=68?3:2)+(B<54?2:1)+(E>=60?1:0);
     if(g.Operator)     s.Operator    =(C>=65?3:2)+(D>=60?2:1)+(B>=55?1:0);
     s.Explorer=2;
-    return Object.keys(s).reduce((b,k)=>s[k]>s[b]?k:b,'Explorer');
+    const PRIMARY_AXIS={Strategist:['A',57],Promoter:['B',60],Maverick:['A',58],Collaborator:['C',60],Specialist:['D',63],Operator:['C',62],Explorer:[null,0]};
+    const maxScore=Math.max(...Object.values(s));
+    const tied=Object.keys(s).filter(k=>s[k]===maxScore);
+    if(tied.length===1) return tied[0];
+    return tied.slice().sort((a,b)=>{
+      const [axA,thA]=PRIMARY_AXIS[a],[axB,thB]=PRIMARY_AXIS[b];
+      const marginA=axA?vals[axA]-thA:-999, marginB=axB?vals[axB]-thB:-999;
+      return marginB-marginA;
+    })[0];
   }
   let passed=0,failed=0;
   tests.forEach(t=>{const r=tc(t[1],t[2],t[3],t[4],t[5]);r===t[6]?passed++:(failed++,console.warn('⚠ CLASSIFIER FAIL: '+t[0]+' → got '+r+', expected '+t[6]));});
